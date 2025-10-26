@@ -58,7 +58,7 @@ export async function POST(req: NextRequest) {
     const xhs = [...xhsBasic, ...xhsHeadless];
 
     // basic scoring by title token overlap
-    const tokens = new Set(query.toLowerCase().split(/\s+/).filter(Boolean));
+    const tokens = new Set(query.toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, " ").split(/\s+/).filter(Boolean));
     const scoreFromTitle = (title?: string) => {
       if (!title) return 0.0;
       const tks = title.toLowerCase().split(/\s+/).filter(Boolean);
@@ -111,7 +111,7 @@ export async function POST(req: NextRequest) {
     }
 
     const results = preliminary
-      .filter((r) => r.score >= 0.3)
+      .filter((r) => r.score >= 0.25)
       .sort((a, b) => b.score - a.score)
       .slice(0, 6);
 

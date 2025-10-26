@@ -17,7 +17,16 @@ export async function fetchCoupangMeta(url: string): Promise<CoupangProduct> {
   const html = await res.text();
   const $ = load(html);
 
-  const title = $("meta[property='og:title']").attr("content") || $("title").text().trim();
+  let title = $("meta[property='og:title']").attr("content")
+    || $("meta[name='title']").attr("content")
+    || $("title").text().trim();
+  if (!title) {
+    title = $("h2.prod-buy-header__title").text().trim()
+      || $("h2.prod-title").text().trim()
+      || $("div.prod-buy-header h2").text().trim()
+      || $("h1, h2").first().text().trim();
+  }
+  const metaDescription = $("meta[name='description']").attr("content") || "";
   const images = new Set<string>();
 
   // og:image
@@ -30,6 +39,10 @@ export async function fetchCoupangMeta(url: string): Promise<CoupangProduct> {
     if (!src) return;
     if (/\.(jpg|jpeg|png|webp)(\?.*)?$/i.test(src)) images.add(src.startsWith("http") ? src : `https:${src}`);
   });
+
+  if (!title && metaDescription) {
+    title = metaDescription.split(/[,|·\-]/)[0]?.trim() || metaDescription.trim();
+  }
 
   return { title, images: Array.from(images) };
 }
