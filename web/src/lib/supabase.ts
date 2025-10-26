@@ -34,4 +34,32 @@ export async function logSearchEvent(payload: {
   }
 }
 
+export async function getCachedResult(keyHash: string): Promise<{ ae: unknown[]; xhs: unknown[] } | null> {
+  try {
+    const supabase = getServerSupabase();
+    if (!supabase) return null;
+    const { data } = await supabase
+      .from("search_cache")
+      .select("ae_json, xhs_json")
+      .eq("key_hash", keyHash)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (!data) return null;
+    return { ae: (data as any).ae_json ?? [], xhs: (data as any).xhs_json ?? [] };
+  } catch {
+    return null;
+  }
+}
+
+export async function setCachedResult(keyHash: string, query: string, payload: { ae: unknown[]; xhs: unknown[] }): Promise<void> {
+  try {
+    const supabase = getServerSupabase();
+    if (!supabase) return;
+    await supabase.from("search_cache").insert({ key_hash: keyHash, query, ae_json: payload.ae, xhs_json: payload.xhs });
+  } catch {
+    // ignore
+  }
+}
+
 

@@ -3,7 +3,8 @@ import { searchAliExpressByText } from "@/lib/aeSearch";
 import { searchXhsByText, searchXhsHeadless } from "@/lib/xhsSearch";
 import { fetchCoupangMeta } from "@/lib/coupang";
 import { computeAverageHashFromBuffer, hammingDistanceHex64, similarityFromHamming64 } from "@/lib/imageHash";
-import { logSearchEvent } from "@/lib/supabase";
+import { logSearchEvent, getCachedResult, setCachedResult } from "@/lib/supabase";
+import { fetchWithTimeout } from "@/lib/http";
 
 export const runtime = "nodejs";
 
@@ -34,6 +35,21 @@ export async function POST(req: NextRequest) {
     if (!query && file) query = "product";
 
     const started = Date.now();
+
+    // cache key (simple): coupangUrl + query
+    const key = `${coupangUrl}|${query}`;
+    const keyHash = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(key)).then((buf) =>
+      Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, "0")).join("")
+    );
+
+    const cached = await getCachedResult(keyHash).catch(() => null);
+    if (cached) {
+      const results = [
+        ...cached.ae.map((c: any) => ({ platform: "ae" as const, ...c })),
+        ...cached.xhs.map((c: any) => ({ platform: "xhs" as const, ...c })),
+      ];
+      return NextResponse.json({ results });
+    }
     const [ae, xhsBasic, xhsHeadless] = await Promise.all([
       searchAliExpressByText(query).catch(() => []),
       searchXhsByText(query).catch(() => []),
@@ -61,7 +77,7 @@ export async function POST(req: NextRequest) {
       baseBuffer = Buffer.from(await file.arrayBuffer());
     } else if (coupangImages[0]) {
       try {
-        const imgRes = await fetch(coupangImages[0]);
+        const imgRes = await fetchWithTimeout(coupangImages[0], { timeoutMs: 7000 });
         if (imgRes.ok) baseBuffer = Buffer.from(await imgRes.arrayBuffer());
       } catch {}
     }
@@ -74,7 +90,10 @@ export async function POST(req: NextRequest) {
             let sim = 0;
             if (r.thumbnail) {
               try {
-                const tRes = await fetch(r.thumbnail.startsWith("http") ? r.thumbnail : `https:${r.thumbnail}`);
+                const tRes = await fetchWithTimeout(
+                  r.thumbnail.startsWith("http") ? r.thumbnail : `https:${r.thumbnail}`,
+                  { timeoutMs: 7000 }
+                );
                 if (tRes.ok) {
                   const tBuf = Buffer.from(await tRes.arrayBuffer());
                   const tHash = await computeAverageHashFromBuffer(tBuf);
@@ -95,6 +114,15 @@ export async function POST(req: NextRequest) {
       .filter((r) => r.score >= 0.3)
       .sort((a, b) => b.score - a.score)
       .slice(0, 6);
+
+    // write cache (best-effort)
+    (async () => {
+      try {
+        const ae = results.filter((r) => r.platform === "ae").map((r) => ({ url: r.url, score: r.score, title: r.title, thumbnail: r.thumbnail }));
+        const xhs = results.filter((r) => r.platform === "xhs").map((r) => ({ url: r.url, score: r.score, title: r.title, thumbnail: r.thumbnail }));
+        await setCachedResult(keyHash, query, { ae, xhs });
+      } catch {}
+    })();
 
     // async logging (fire and forget)
     (async () => {
